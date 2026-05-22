@@ -1,0 +1,18 @@
+[Unit]
+Description=Corporate Translator (USB HID + serial clipboard relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Bring up the USB composite gadget, then run the main loop.
+ExecStartPre=/bin/bash /home/pi/pi-corporate-translator/setup_gadget.sh
+ExecStart=/usr/bin/python3 /home/pi/pi-corporate-translator/main.py
+WorkingDirectory=/home/pi/pi-corporate-translator
+# main.py needs root for /dev/hidg0 and GPIO; the gadget setup needs configfs.
+User=root
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
