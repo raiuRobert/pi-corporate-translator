@@ -297,22 +297,32 @@ def main():
         "--once", action="store_true",
         help="run a single translation flow and exit (no trigger loop)",
     )
+    parser.add_argument(
+        "--delay", type=float, default=0.0,
+        help="seconds to wait before starting (gives you time to select text)",
+    )
     args = parser.parse_args()
 
     led = _make_led()
     led.idle()
+    hid_keyboard.release_all()  # clear any key left stuck by a previous crash
     link = ClipboardLink()
     busy = threading.Lock()
     on_press = _make_trigger(busy, link, led)
 
     try:
         if args.once:
+            if args.delay:
+                print("Select your text now -- translating in %g seconds..."
+                      % args.delay)
+                time.sleep(args.delay)
             on_press()
         elif args.trigger == "key":
             _loop_keyboard(on_press)
         else:
             _loop_button(on_press)
     finally:
+        hid_keyboard.release_all()  # never exit with a key held down
         led.stop()
         link.close()
 

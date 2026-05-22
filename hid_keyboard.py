@@ -30,10 +30,14 @@ def _send_report(report: bytes, device: str = HID_DEVICE) -> None:
 
 
 def _send_chord(chord: bytes, device: str = HID_DEVICE) -> None:
-    _send_report(chord, device)
-    time.sleep(_PRESS_HOLD_S)
-    _send_report(_RELEASE, device)
-    time.sleep(_PRESS_HOLD_S)
+    try:
+        _send_report(chord, device)
+        time.sleep(_PRESS_HOLD_S)
+    finally:
+        # Always release, even if the press path raised -- otherwise the host
+        # sees the chord held down and auto-repeats it (e.g. Ctrl+C forever).
+        _send_report(_RELEASE, device)
+        time.sleep(_PRESS_HOLD_S)
 
 
 def send_copy(device: str = HID_DEVICE) -> None:
@@ -44,6 +48,18 @@ def send_copy(device: str = HID_DEVICE) -> None:
 def send_paste(device: str = HID_DEVICE) -> None:
     """Press Ctrl+V on the attached host."""
     _send_chord(_CTRL_V, device)
+
+
+def release_all(device: str = HID_DEVICE) -> None:
+    """Send an all-keys-released report to clear any stuck key on the host.
+
+    Safe to call at any time; failures are swallowed so it can be used as a
+    best-effort cleanup on startup and shutdown.
+    """
+    try:
+        _send_report(_RELEASE, device)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
