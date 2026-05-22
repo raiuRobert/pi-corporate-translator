@@ -158,6 +158,41 @@ is logged on or not" optional.
 3. Press the button on the Pi.
 4. Watch your prose get *operationalized*. ✨
 
+## Testing without a button
+
+Validate the build in layers, from "needs no hardware" upward:
+
+**1. Translator only (no button, no PC needed) — just WiFi + login.** This is the
+core. On the Pi:
+
+```bash
+python3 translator.py "let's talk later about the project"
+```
+
+It should print a corporate-jargon rewrite. If it errors with `No accessToken`,
+run `claude` to log in first.
+
+**2. USB gadget devices.** Bring the gadget up and confirm the device nodes
+appear (no PC interaction required):
+
+```bash
+sudo bash setup_gadget.sh
+ls -l /dev/hidg0 /dev/ttyGS0
+```
+
+**3. Full pipeline without a button.** Plug the Pi's USB data port into the PC,
+start `companion.py` on the PC, then run the main program in keyboard mode and
+press **Enter** to trigger a cycle (instead of the physical button):
+
+```bash
+sudo python3 main.py --trigger key
+```
+
+Select text on the PC, switch to the Pi's terminal, press Enter, and watch it
+copy → translate → paste. `sudo python3 main.py --once` runs a single cycle and
+exits. When you later wire a button to GPIO16, run `main.py` with no flags (or
+use the systemd service).
+
 ## Troubleshooting
 
 - **Nothing happens on button press** — check `journalctl -u corp-translator`.

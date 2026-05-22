@@ -233,29 +233,28 @@ def run_flow(link: ClipboardLink, led):
         print("UNEXPECTED ERROR: %s" % exc)
 
 
-# --- Button handling -----------------------------------------------------
-def main():
-    import RPi.GPIO as GPIO  # imported here so module stays importable off-Pi
-
-    led = _make_led()
-    led.idle()
-
-    link = ClipboardLink()
-
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(BUTTON_GPIO, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-
-    busy = threading.Lock()
+# --- Trigger handling ----------------------------------------------------
+def _make_trigger(busy, link, led):
+    """Return a callable that runs one flow if one isn't already in progress."""
 
     def on_press():
         if not busy.acquire(blocking=False):
-            return  # a flow is already running; ignore the press
+            return  # a flow is already running; ignore the trigger
         try:
             run_flow(link, led)
         finally:
             led.idle()
             busy.release()
 
+    return on_press
+
+
+def _loop_button(on_press):
+    """Poll the GPIO button (active-low) and fire on_press for each press."""
+    import RPi.GPIO as GPIO  # imported here so the module stays importable off-Pi
+
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setup(BUTTON_GPIO, GPIO.IN, pull_up_down=GPIO.PUD_UP)
     print("Corporate Translator ready. Press the button on GPIO%d." % BUTTON_GPIO)
     last = 0.0
     try:
@@ -265,16 +264,57 @@ def main():
                 if now - last > DEBOUNCE_S:
                     last = now
                     threading.Thread(target=on_press, daemon=True).start()
-                # wait for release to avoid repeat triggers
-                while GPIO.input(BUTTON_GPIO) == GPIO.LOW:
+                while GPIO.input(BUTTON_GPIO) == GPIO.LOW:  # wait for release
                     time.sleep(0.02)
             time.sleep(0.01)
     except KeyboardInterrupt:
         pass
     finally:
+        GPIO.cleanup()
+
+
+def _loop_keyboard(on_press):
+    """Trigger a flow each time Enter is pressed -- a no-button test harness."""
+    print("Corporate Translator ready (keyboard mode). "
+          "Press Enter to translate, Ctrl+C to quit.")
+    try:
+        while True:
+            input()  # blocks until Enter
+            threading.Thread(target=on_press, daemon=True).start()
+    except (KeyboardInterrupt, EOFError):
+        pass
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Corporate Translator dongle")
+    parser.add_argument(
+        "--trigger", choices=("button", "key"), default="button",
+        help="how to start a translation: physical button (default) or Enter key",
+    )
+    parser.add_argument(
+        "--once", action="store_true",
+        help="run a single translation flow and exit (no trigger loop)",
+    )
+    args = parser.parse_args()
+
+    led = _make_led()
+    led.idle()
+    link = ClipboardLink()
+    busy = threading.Lock()
+    on_press = _make_trigger(busy, link, led)
+
+    try:
+        if args.once:
+            on_press()
+        elif args.trigger == "key":
+            _loop_keyboard(on_press)
+        else:
+            _loop_button(on_press)
+    finally:
         led.stop()
         link.close()
-        GPIO.cleanup()
 
 
 if __name__ == "__main__":
