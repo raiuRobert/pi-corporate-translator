@@ -12,7 +12,24 @@ import time
 
 import requests
 
-CREDENTIALS_PATH = os.path.expanduser("~/.claude/.credentials.json")
+def _credentials_path() -> str:
+    """Locate ~/.claude/.credentials.json, honoring SUDO_USER when run via sudo.
+
+    Without this, ``sudo python3 main.py`` resolves ``~`` to ``/root`` and the
+    credentials (which live in the invoking user's home) are not found.
+    """
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and sudo_user != "root":
+        try:
+            import pwd  # POSIX only
+            home = pwd.getpwnam(sudo_user).pw_dir
+            return os.path.join(home, ".claude", ".credentials.json")
+        except Exception:
+            pass
+    return os.path.expanduser("~/.claude/.credentials.json")
+
+
+CREDENTIALS_PATH = _credentials_path()
 
 MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
@@ -48,6 +65,15 @@ def _save_credentials(creds: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(creds, fh, indent=2)
     os.replace(tmp, CREDENTIALS_PATH)
+    # If running via sudo, restore the original user's ownership so later
+    # non-root use of the credentials still works.
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if sudo_uid and sudo_gid:
+        try:
+            os.chown(CREDENTIALS_PATH, int(sudo_uid), int(sudo_gid))
+        except Exception:
+            pass
 
 
 def _access_token(creds: dict) -> str:
