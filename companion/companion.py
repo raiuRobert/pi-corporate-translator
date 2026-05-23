@@ -8,7 +8,8 @@ Protocol (newline-delimited, clipboard text is base64 UTF-8):
     Pi  -> here : SET_CLIP:<base64>   -> decode and put it on the clipboard
     here -> Pi : TRIGGER              -> start a translate flow (hotkey-driven)
 
-Global hotkey (Ctrl+Alt+T):
+Global hotkey (Ctrl+Shift+J -- intentionally no Alt, since pressing
+Alt activates the menu bar in Notepad/Office and deselects your text):
 - COMPANION_MODE=pc (default): the companion runs the full flow locally
   using SendInput keystroke synthesis and the PC's own Claude credentials.
   Works whether or not the Pi is connected.
@@ -46,12 +47,15 @@ BAUD = 115200
 PORT_HINTS = ("usb serial", "cdc", "acm", "corporate translator")
 MODE = os.environ.get("COMPANION_MODE", "pc").lower()  # "pc" or "dongle"
 
-# Ctrl+Alt+T as a Windows global hotkey
+# Ctrl+Shift+J as a Windows global hotkey. Avoids Alt because Alt
+# activates the menu bar in Notepad/Office and deselects the user's text
+# before our SendInput Ctrl+C can read it.
 HOTKEY_ID = 1
-MOD_ALT = 0x0001
+MOD_SHIFT = 0x0004
 MOD_CONTROL = 0x0002
 MOD_NOREPEAT = 0x4000
-VK_T = 0x54
+HOTKEY_VK = 0x4A           # VK_J
+HOTKEY_LABEL = "Ctrl+Shift+J"
 VK_C = 0x43
 VK_V = 0x56
 VK_CTRL = 0x11
@@ -231,14 +235,15 @@ def _on_hotkey() -> None:
 
 
 def _hotkey_loop() -> None:
-    """Register Ctrl+Alt+T and dispatch each press through _on_hotkey."""
+    """Register the global hotkey and dispatch each press through _on_hotkey."""
     user32 = ctypes.windll.user32
-    if not user32.RegisterHotKey(None, HOTKEY_ID,
-                                 MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_T):
-        print("!! could not register Ctrl+Alt+T hotkey (errno %d); "
-              "another app may already own it" % ctypes.get_last_error())
+    mods = MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT
+    if not user32.RegisterHotKey(None, HOTKEY_ID, mods, HOTKEY_VK):
+        print("!! could not register %s hotkey (errno %d); "
+              "another app may already own it"
+              % (HOTKEY_LABEL, ctypes.get_last_error()))
         return
-    print("Hotkey registered: Ctrl+Alt+T (mode=%s)" % MODE)
+    print("Hotkey registered: %s (mode=%s)" % (HOTKEY_LABEL, MODE))
     msg = wintypes.MSG()
     try:
         while user32.GetMessageW(ctypes.byref(msg), 0, 0, 0) > 0:
