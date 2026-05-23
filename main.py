@@ -21,6 +21,7 @@ try/except so the program also runs headless.
 """
 
 import base64
+import secrets
 import threading
 import time
 
@@ -206,6 +207,14 @@ class ClipboardLink:
 def run_flow(link: ClipboardLink, led):
     """Execute one full copy -> translate -> paste cycle."""
     try:
+        # Pre-mark the clipboard with a unique sentinel. If Ctrl+C doesn't
+        # replace it (focused window has no selection, or wrong window is
+        # focused with no selection in it), we'll detect that instead of
+        # silently translating whatever happened to be on the clipboard.
+        sentinel = "__CT_SENTINEL_%s__" % secrets.token_hex(8)
+        link.set_clipboard(sentinel)
+        time.sleep(0.15)
+
         # COPYING
         hid_keyboard.send_copy()
         time.sleep(0.25)  # let the host update its clipboard
@@ -213,6 +222,12 @@ def run_flow(link: ClipboardLink, led):
         # WAITING_CLIP
         led.waiting()
         original = link.get_clipboard()
+
+        if original == sentinel or not original.strip():
+            raise TranslationError(
+                "Nothing was copied -- the focused window had no text selected "
+                "(or wasn't focused). Select your text and try again."
+            )
 
         # TRANSLATING
         led.translating()
