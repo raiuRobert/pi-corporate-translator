@@ -8,11 +8,17 @@ Protocol (newline-delimited, clipboard text is base64 UTF-8):
     Pi  -> here : SET_CLIP:<base64>   -> decode and put it on the clipboard
     here -> Pi : TRIGGER              -> start a translate flow (hotkey-driven)
 
-When the user presses the global hotkey (Ctrl+Alt+T), this script sends
-TRIGGER over the serial line so the Pi's --trigger serial mode starts a
-cycle without the user ever having to leave their target window. Because
-the hotkey fires from the focused window, focus is naturally preserved
-through the (~3 s) round-trip back to Ctrl+V.
+Global hotkey (Ctrl+Alt+T):
+- COMPANION_MODE=pc (default): the companion runs the full flow locally
+  using SendInput keystroke synthesis and the PC's own Claude credentials.
+  Works whether or not the Pi is connected.
+- COMPANION_MODE=dongle: the companion sends a TRIGGER line over serial
+  and the Pi runs the flow (HID Ctrl+C / Ctrl+V). Requires the Pi to be
+  running ``main.py --trigger serial``.
+
+Why two modes: HID delivery from a USB gadget can flake out across host
+suspend/resume cycles; the pc mode is a zero-config fallback that gives
+the same UX (~100 ms latency) without depending on the dongle.
 
 The Pi's COM port is auto-detected by description and reconnected on disconnect.
 """
@@ -20,15 +26,25 @@ The Pi's COM port is auto-detected by description and reconnected on disconnect.
 import base64
 import ctypes
 import ctypes.wintypes as wintypes
+import os
+import secrets
+import sys
 import threading
 import time
+
+# Make ../translator.py importable for the pc-mode flow
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                                 os.pardir)))
 
 import serial
 import serial.tools.list_ports
 import win32clipboard
 
+from translator import translate, TranslationError
+
 BAUD = 115200
 PORT_HINTS = ("usb serial", "cdc", "acm", "corporate translator")
+MODE = os.environ.get("COMPANION_MODE", "pc").lower()  # "pc" or "dongle"
 
 # Ctrl+Alt+T as a Windows global hotkey
 HOTKEY_ID = 1
@@ -36,7 +52,64 @@ MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_NOREPEAT = 0x4000
 VK_T = 0x54
+VK_C = 0x43
+VK_V = 0x56
+VK_CTRL = 0x11
 WM_HOTKEY = 0x0312
+
+
+# --- SendInput keystroke synthesis (pc mode) ----------------------------
+INPUT_KEYBOARD = 1
+KEYEVENTF_KEYUP = 0x0002
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
+    ]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [("uMsg", wintypes.DWORD), ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD)]
+
+
+class _INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT),
+                    ("hi", _HARDWAREINPUT)]
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _U)]
+
+
+_user32 = ctypes.windll.user32
+
+
+def _send_key(vk: int, flags: int = 0) -> None:
+    inp = _INPUT()
+    inp.type = INPUT_KEYBOARD
+    inp.ki = _KEYBDINPUT(wVk=vk, wScan=0, dwFlags=flags, time=0,
+                         dwExtraInfo=None)
+    _user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+
+def _send_chord(modifier_vk: int, key_vk: int) -> None:
+    _send_key(modifier_vk)
+    _send_key(key_vk)
+    time.sleep(0.02)
+    _send_key(key_vk, KEYEVENTF_KEYUP)
+    _send_key(modifier_vk, KEYEVENTF_KEYUP)
 
 
 def find_pi_port():
@@ -97,34 +170,80 @@ def _set_current_ser(ser):
         _CURRENT_SER["ser"] = ser
 
 
-def _send_trigger() -> None:
+_FLOW_LOCK = threading.Lock()  # prevents overlapping pc-mode flows
+
+
+def _send_trigger_to_pi() -> bool:
+    """Forward a TRIGGER to the Pi over serial. Returns True if delivered."""
     with _SER_LOCK:
         ser = _CURRENT_SER["ser"]
         if ser is None:
-            print("hotkey pressed but dongle not connected")
-            return
+            return False
         try:
             ser.write(b"TRIGGER\n")
             ser.flush()
-            print("-> TRIGGER (hotkey)")
+            print("-> TRIGGER (sent to Pi)")
+            return True
         except Exception as exc:
             print("!! failed to send TRIGGER: %s" % exc)
+            return False
+
+
+def _pc_run_flow() -> None:
+    """Run the whole copy->translate->paste cycle locally using SendInput."""
+    if not _FLOW_LOCK.acquire(blocking=False):
+        print("pc-flow already running; ignoring hotkey")
+        return
+    try:
+        sentinel = "__CT_SENTINEL_%s__" % secrets.token_hex(8)
+        set_clipboard_text(sentinel)
+        time.sleep(0.08)
+        _send_chord(VK_CTRL, VK_C)
+        time.sleep(0.15)
+        original = get_clipboard_text() or ""
+        if original == sentinel or not original.strip():
+            print("!! nothing selected -- aborting (clipboard unchanged)")
+            return
+        print("translating (%d chars): %r" % (len(original), original[:60]))
+        try:
+            rewritten = translate(original)
+        except TranslationError as exc:
+            print("!! translate failed: %s" % exc)
+            return
+        except Exception as exc:  # noqa: BLE001
+            print("!! unexpected translate error: %s" % exc)
+            return
+        set_clipboard_text(rewritten)
+        time.sleep(0.08)
+        _send_chord(VK_CTRL, VK_V)
+        print("OK: %r -> %r" % (original[:60], rewritten[:60]))
+    finally:
+        _FLOW_LOCK.release()
+
+
+def _on_hotkey() -> None:
+    if MODE == "dongle":
+        if not _send_trigger_to_pi():
+            print("hotkey pressed but dongle not connected (mode=dongle)")
+    else:
+        # pc mode (default): do the whole flow here, with no Pi involvement
+        threading.Thread(target=_pc_run_flow, daemon=True).start()
 
 
 def _hotkey_loop() -> None:
-    """Register Ctrl+Alt+T and forward each press as a TRIGGER over serial."""
+    """Register Ctrl+Alt+T and dispatch each press through _on_hotkey."""
     user32 = ctypes.windll.user32
     if not user32.RegisterHotKey(None, HOTKEY_ID,
                                  MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_T):
         print("!! could not register Ctrl+Alt+T hotkey (errno %d); "
               "another app may already own it" % ctypes.get_last_error())
         return
-    print("Hotkey registered: Ctrl+Alt+T")
+    print("Hotkey registered: Ctrl+Alt+T (mode=%s)" % MODE)
     msg = wintypes.MSG()
     try:
         while user32.GetMessageW(ctypes.byref(msg), 0, 0, 0) > 0:
             if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
-                _send_trigger()
+                _on_hotkey()
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
     finally:
