@@ -153,9 +153,28 @@ is logged on or not" optional.
 
 ## Usage
 
-1. Plug the dongle into the PC and make sure `companion.py` is running.
-2. Select text in any app.
-3. Press the button on the Pi.
+The companion registers a global hotkey on the PC. There are two ways to
+trigger a translation:
+
+**Hotkey (recommended): Ctrl+Alt+T from any focused app with text selected.**
+Companion handles the whole cycle locally (~3 s, no dongle required) using
+the PC's own Claude credentials. This is the default mode and works whether
+the Pi is plugged in or not.
+
+**Physical button on the Pi.** Press the GPIO16 button; the Pi sends HID
+Ctrl+C, asks the companion for the clipboard over serial, translates,
+sends back, then HID Ctrl+V. Same UX, just dongle-driven.
+
+To make the hotkey route through the Pi instead of running locally,
+set `COMPANION_MODE=dongle` in the companion's environment and run the
+Pi with `main.py --trigger serial`. Useful if you specifically want the
+dongle to do the keystroking (e.g., to leave no fingerprints from the
+PC's own keyboard process).
+
+In all cases:
+1. Make sure `companion.py` is running on the PC.
+2. Select your text in any app.
+3. Press Ctrl+Alt+T (or the Pi button).
 4. Watch your prose get *operationalized*. ✨
 
 ## Testing without a button
