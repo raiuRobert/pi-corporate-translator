@@ -152,9 +152,14 @@ class ClipboardLink:
         self._ser = serial.Serial(port, baud, timeout=0.2)
         self._clip_event = threading.Event()
         self._clip_value = None
+        self._on_trigger = None  # callback invoked when companion sends TRIGGER
         self._stop = threading.Event()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
+
+    def set_trigger_callback(self, fn):
+        """Register a callable invoked on each incoming TRIGGER line."""
+        self._on_trigger = fn
 
     def _read_loop(self):
         buf = b""
@@ -179,6 +184,11 @@ class ClipboardLink:
             except Exception:
                 self._clip_value = ""
             self._clip_event.set()
+        elif line == b"TRIGGER":
+            cb = self._on_trigger
+            if cb is not None:
+                # Run on a fresh thread so the reader doesn't block on the flow.
+                threading.Thread(target=cb, daemon=True).start()
 
     def get_clipboard(self, timeout=CLIP_TIMEOUT_S):
         """Request the host clipboard. Returns text or raises TimeoutError."""
@@ -300,13 +310,30 @@ def _loop_keyboard(on_press):
         pass
 
 
+def _loop_serial(link, on_press):
+    """Wait for TRIGGER lines from the PC companion (e.g. global hotkey).
+
+    The flow itself is invoked from the reader thread via the trigger
+    callback; this loop just keeps the program alive.
+    """
+    link.set_trigger_callback(on_press)
+    print("Corporate Translator ready (serial trigger mode). "
+          "Press the configured hotkey on the PC.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Corporate Translator dongle")
     parser.add_argument(
-        "--trigger", choices=("button", "key"), default="button",
-        help="how to start a translation: physical button (default) or Enter key",
+        "--trigger", choices=("button", "key", "serial"), default="button",
+        help="how to start a translation: physical button (default), Enter key, "
+             "or TRIGGER lines from the PC companion (e.g. a global hotkey)",
     )
     parser.add_argument(
         "--once", action="store_true",
@@ -334,6 +361,8 @@ def main():
             on_press()
         elif args.trigger == "key":
             _loop_keyboard(on_press)
+        elif args.trigger == "serial":
+            _loop_serial(link, on_press)
         else:
             _loop_button(on_press)
     finally:
