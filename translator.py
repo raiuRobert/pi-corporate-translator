@@ -77,28 +77,41 @@ SYSTEM_PROMPT = (
     "    onion, run it up the flagpole, swim against the tide, get our ducks "
     "    in a row, paradigm shift, force multiplier, single source of truth, "
     "    rising tide lifts all boats, value-add, win-win, action item\n\n"
-    "ROMANIAN PALETTE (sample, use sparingly and rotate). Romanian corporate "
-    "register is a mix of Romanian words and English loanwords used "
-    "untranslated -- both feel natural and you should freely interleave them:\n"
-    "  verbe: a leveragea, a operationaliza, a pivota, a deliveri, a alinia, "
-    "    a sincroniza, a escalada, a prioritiza, a face follow-up, a face "
-    "    sync, a face deep-dive, a face un check-in, a face un brainstorming, "
-    "    a face un kick-off, a duce la nivelul urmator, a circle back, a "
-    "    socializa o idee, a empower-ui echipa\n"
-    "  substantive: sinergii, deliverabile, stakeholderi, aliniere, "
-    "    bandwidth, blockere, dependinte, learnings, win-uri, KPI-uri, OKR-"
-    "    uri, roadmap, backlog, scope, runway, momentum, traction, focus, "
-    "    impact, value-add\n"
-    "  modificatori: strategic, holistic, actionable, scalabil, end-to-end, "
-    "    cross-functional, customer-centric, data-driven, high-impact, "
-    "    mission-critical, fit-for-purpose, best-in-class\n"
-    "  expresii: low-hanging fruit, win-win, a misca acul, a ridica stacheta, "
-    "    a fi pe aceeasi pagina, a duce conversatia offline, a iesi din zona "
-    "    de confort, paradigm shift, single source of truth, abordare "
-    "    holistica\n"
+    "ROMANIAN PALETTE (sample, use sparingly and rotate). Key rule: only "
+    "borrow English words that Romanian professionals actually say "
+    "untranslated -- almost always nouns. Do NOT invent Romanianised verbs "
+    "from English roots (no 'a leveragea', no 'a face un circle back', no "
+    "'a empower-ui', no 'a face deep-dive', no 'a deliveri'). For verbs, "
+    "use real Romanian, even if it ends up slightly longer. The result "
+    "should sound like an actual Romanian middle manager, not a translator "
+    "tool.\n"
+    "  verbe (toate romanesti): a prioritiza, a alinia, a sincroniza, a "
+    "    escalada, a operationaliza, a pivota, a clarifica, a valida, a "
+    "    optimiza, a livra (in loc de 'deliver'), a maximiza, a valorifica "
+    "    (in loc de 'leverage'), a urmari, a monitoriza, a reevalua, a "
+    "    cascada, a aprofunda, a reveni cu detalii, a redirectiona discutia, "
+    "    a se aplica unitar, a se asigura ca, a comunica proactiv\n"
+    "  substantive (mix RO + imprumuturi EN care suna natural in birou): "
+    "    deliverable / deliverable-uri, stakeholderi, meeting / meeting-uri, "
+    "    deadline / deadline-uri, kick-off, follow-up, feedback, briefing, "
+    "    debriefing, training, onboarding, roadmap, backlog, sprint, "
+    "    milestone, target, KPI / KPI-uri, OKR / OKR-uri, scope, blockere, "
+    "    dependinte, prioritate, sinergii, aliniere, claritate, vizibilitate, "
+    "    impact, traction, momentum, focus, learnings (sau 'invataminte'), "
+    "    obiective strategice, parti interesate\n"
+    "  modificatori: strategic, holistic, scalabil, sustenabil, robust, "
+    "    integrat, transversal, cross-functional, end-to-end, data-driven, "
+    "    customer-centric, mission-critical, actionable (sau 'actionabil'), "
+    "    aliniat la obiective, cu impact ridicat, de inalt nivel\n"
+    "  expresii: a misca acul, a ridica stacheta, a fi pe aceeasi pagina, a "
+    "    duce conversatia offline, a iesi din zona de confort, a face un "
+    "    pas inapoi, a strange randurile, a trage pe linia moarta, a duce "
+    "    la nivelul urmator, single source of truth, win-win, value-add\n"
     "Keep diacritics if the input uses them; drop them if the input drops "
-    "them. Don't translate the English loanwords above into Romanian -- "
-    "Romanian office speech keeps them in English.\n\n"
+    "them. If a Romanian word exists and sounds natural, prefer it over an "
+    "English borrowing. Keep English nouns in English when that's how they "
+    "are actually used in Romanian offices (deliverable-uri, stakeholderi, "
+    "KPI-uri).\n\n"
     "Respond with ONLY the rewritten text -- no preamble, no quotes, no "
     "explanation, no language label."
 )
@@ -241,6 +254,15 @@ def translate(text: str) -> str:
 
 if __name__ == "__main__":
     import sys
+
+    # On Windows the default stdout encoding is cp1252, which chokes on the
+    # Romanian diacritics (ă, î, ș, ț) the model may return. Force UTF-8 for
+    # CLI smoke tests. The companion uses the return value directly, so it
+    # isn't affected.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
     sample = " ".join(sys.argv[1:]) or "Let's talk later about the project."
     print(translate(sample))
